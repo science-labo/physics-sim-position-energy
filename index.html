@@ -2,26 +2,28 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>位置エネルギー 3Dシミュレーター</title>
+    <title>位置エネルギー実験シミュレーター (2連グラフ版)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; font-family: sans-serif; background: #222; color: white; display: flex; }
-        #ui-panel { width: 320px; padding: 20px; background: rgba(0,0,0,0.8); z-index: 10; height: 100vh; overflow-y: auto; box-sizing: border-box; }
+        body { margin: 0; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1a1a1a; color: white; display: flex; }
+        #ui-panel { width: 350px; padding: 20px; background: rgba(30,30,30,0.95); z-index: 10; height: 100vh; overflow-y: auto; box-sizing: border-box; border-right: 1px solid #444; }
         #canvas-container { flex-grow: 1; position: relative; }
-        .control-group { margin-bottom: 20px; border-bottom: 1px solid #444; padding-bottom: 10px; }
-        label { display: block; font-size: 0.9rem; margin-bottom: 5px; }
-        input[type="range"] { width: 100%; }
-        button { width: 100%; padding: 10px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; font-weight: bold; }
-        button:hover { background: #0056b3; }
-        .stats { font-family: monospace; background: #111; padding: 10px; border-radius: 4px; margin-top: 10px; }
-        canvas#chartCanvas { background: white; margin-top: 20px; border-radius: 4px; }
+        .control-group { margin-bottom: 20px; background: #333; padding: 15px; border-radius: 8px; }
+        label { display: block; font-size: 0.9rem; margin-bottom: 8px; color: #ddd; }
+        input[type="range"] { width: 100%; cursor: pointer; }
+        button { width: 100%; padding: 12px; cursor: pointer; background: #28a745; color: white; border: none; border-radius: 6px; font-weight: bold; font-size: 1rem; transition: 0.2s; }
+        button:hover { background: #218838; }
+        .stats { font-family: monospace; background: #000; padding: 12px; border-radius: 6px; margin-top: 15px; border-left: 4px solid #007bff; }
+        .chart-container { background: white; margin-top: 15px; border-radius: 8px; padding: 10px; }
+        h3 { font-size: 1rem; margin-top: 0; color: #fff; border-bottom: 1px solid #555; padding-bottom: 5px; }
+        .chart-label { color: #333; font-size: 0.8rem; font-weight: bold; text-align: center; margin-bottom: 5px; }
     </style>
 </head>
 <body>
 
 <div id="ui-panel">
-    <h2>実験設定</h2>
+    <h3>実験コントロール</h3>
     <div class="control-group">
         <label>鉄球の質量 ($m$): <span id="val-mass">1.0</span> kg</label>
         <input type="range" id="input-mass" min="0.5" max="5.0" step="0.5" value="1.0">
@@ -30,99 +32,103 @@
         <label>落とす高さ ($h$): <span id="val-height">5.0</span> m</label>
         <input type="range" id="input-height" min="1.0" max="10.0" step="0.5" value="5.0">
     </div>
+    
     <button id="btn-drop">鉄球を落とす</button>
-    <button id="btn-reset" style="margin-top:10px; background:#555;">リセット</button>
+    <button id="btn-reset" style="margin-top:10px; background:#6c757d;">リセット</button>
 
     <div class="stats">
-        <div>位置エネルギー: <span id="stat-pe">0</span> J</div>
+        <div>推定エネルギー: <span id="stat-pe">0</span> J</div>
         <div>沈み込み距離: <span id="stat-sink">0</span> cm</div>
     </div>
 
-    <canvas id="chartCanvas" width="280" height="200"></canvas>
-    <p style="font-size: 0.8rem; color: #aaa; margin-top: 10px;">※グラフは実験データを蓄積します</p>
+    <div class="chart-container">
+        <div class="chart-label">高さ $h$ と沈み込みの関係</div>
+        <canvas id="chartHeight" width="300" height="200"></canvas>
+    </div>
+
+    <div class="chart-container" style="margin-bottom: 20px;">
+        <div class="chart-label">質量 $m$ と沈み込みの関係</div>
+        <canvas id="chartMass" width="300" height="200"></canvas>
+    </div>
 </div>
 
 <div id="canvas-container"></div>
 
 <script>
-/** * 物理定数・変数 
- * エネルギー $U = mgh$
- * 沈み込み距離 $d$ は $U$ に比例すると仮定 ($U = k \cdot d$)
- */
+// --- 物理定数 ---
 const g = 9.8; 
-const k = 50; // 筒の抵抗係数（シミュレーション用）
+const k = 40; // 沈み込み係数
 
-// Three.js 基本設定
+// --- Three.js セットアップ ---
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, (window.innerWidth - 320) / window.innerHeight, 0.1, 1000);
+scene.background = new THREE.Color(0x222222);
+const camera = new THREE.PerspectiveCamera(60, (window.innerWidth - 350) / window.innerHeight, 0.1, 1000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth - 320, window.innerHeight);
+renderer.setSize(window.innerWidth - 350, window.innerHeight);
 document.getElementById('canvas-container').appendChild(renderer.domElement);
 
-// ライト
-const light = new THREE.DirectionalLight(0xffffff, 1);
-light.position.set(5, 10, 7).normalize();
-scene.add(light);
-scene.add(new THREE.AmbientLight(0x404040));
+// 照明
+const light1 = new THREE.DirectionalLight(0xffffff, 1);
+light1.position.set(5, 10, 7);
+scene.add(light1);
+scene.add(new THREE.AmbientLight(0x606060));
 
-// 床
-const floor = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), new THREE.MeshPhongMaterial({color: 0x333333}));
-floor.rotation.x = -Math.PI / 2;
+// ステージ作成
+const floor = new THREE.Mesh(new THREE.GridHelper(20, 20, 0x444444, 0x333333));
 scene.add(floor);
 
-// 筒 (透明な円柱)
-const tubeGeo = new THREE.CylinderGeometry(0.6, 0.6, 4, 32, 1, true);
-const tubeMat = new THREE.MeshPhongMaterial({color: 0xaaaaaa, transparent: true, opacity: 0.3, side: THREE.DoubleSide});
-const tube = new THREE.Mesh(tubeGeo, tubeMat);
-tube.position.y = 2;
+// 筒
+const tube = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.7, 0.7, 5, 32, 1, true),
+    new THREE.MeshPhongMaterial({color: 0x00ccff, transparent: true, opacity: 0.2, side: THREE.DoubleSide})
+);
+tube.position.y = 2.5;
 scene.add(tube);
 
-// 円柱（沈み込む対象）
-const targetGeo = new THREE.CylinderGeometry(0.5, 0.5, 2, 32);
-const targetMat = new THREE.MeshPhongMaterial({color: 0xff9900});
-const target = new THREE.Mesh(targetGeo, targetMat);
-target.position.y = 3; // 初期位置
+// 円柱ターゲット
+const target = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.6, 0.6, 3, 32),
+    new THREE.MeshPhongMaterial({color: 0xffaa00})
+);
+target.position.y = 1.5; 
 scene.add(target);
 
 // 鉄球
-const ballGeo = new THREE.SphereGeometry(0.4, 32, 32);
-const ballMat = new THREE.MeshPhongMaterial({color: 0x888888, specular: 0xffffff});
-const ball = new THREE.Mesh(ballGeo, ballMat);
+const ball = new THREE.Mesh(
+    new THREE.SphereGeometry(0.5, 32, 32),
+    new THREE.MeshPhongMaterial({color: 0xcccccc, specular: 0xffffff, shininess: 100})
+);
 scene.add(ball);
 
-camera.position.set(0, 6, 12);
+camera.position.set(0, 8, 15);
 camera.lookAt(0, 3, 0);
 
-// アニメーション用変数
-let dropping = false;
-let velocity = 0;
-let initialY = 5;
-let dataPoints = [];
-
-// Chart.js 初期化
-const ctx = document.getElementById('chartCanvas').getContext('2d');
-const chart = new Chart(ctx, {
-    type: 'scatter',
-    data: {
-        datasets: [{
-            label: 'エネルギー vs 沈み込み',
-            data: [],
-            backgroundColor: '#007bff'
-        }]
+// --- グラフ初期化 (Chart.js) ---
+const commonOptions = (xLabel) => ({
+    scales: {
+        x: { type: 'linear', position: 'bottom', title: { display: true, text: xLabel } },
+        y: { title: { display: true, text: '沈み込み (cm)' }, min: 0, max: 15 }
     },
-    options: {
-        scales: {
-            x: { title: { display: true, text: 'エネルギー (J)' } },
-            y: { title: { display: true, text: '距離 (cm)' } }
-        }
-    }
+    plugins: { legend: { display: false } }
 });
 
-// UI制御
+const chartHeight = new Chart(document.getElementById('chartHeight'), {
+    type: 'scatter',
+    data: { datasets: [{ label: 'h vs distance', data: [], backgroundColor: '#ff4444' }] },
+    options: commonOptions('高さ h (m)')
+});
+
+const chartMass = new Chart(document.getElementById('chartMass'), {
+    type: 'scatter',
+    data: { datasets: [{ label: 'm vs distance', data: [], backgroundColor: '#4444ff' }] },
+    options: commonOptions('質量 m (kg)')
+});
+
+// --- ロジック ---
+let dropping = false;
+let velocity = 0;
 const massInput = document.getElementById('input-mass');
 const heightInput = document.getElementById('input-height');
-const peStat = document.getElementById('stat-pe');
-const sinkStat = document.getElementById('stat-sink');
 
 function updateParams() {
     const m = parseFloat(massInput.value);
@@ -130,19 +136,17 @@ function updateParams() {
     document.getElementById('val-mass').innerText = m;
     document.getElementById('val-height').innerText = h;
     
-    ball.scale.set(0.5 + m*0.2, 0.5 + m*0.2, 0.5 + m*0.2); // 重さで見た目を変える
+    ball.scale.set(0.6 + m*0.15, 0.6 + m*0.15, 0.6 + m*0.15);
     if(!dropping) {
-        ball.position.y = h + 4; // 筒の高さ分オフセット
+        ball.position.y = h + 3.2; // 初期位置
     }
-    const pe = m * g * h;
-    peStat.innerText = pe.toFixed(1);
+    document.getElementById('stat-pe').innerText = (m * g * h).toFixed(1);
 }
 
 massInput.oninput = updateParams;
 heightInput.oninput = updateParams;
 updateParams();
 
-// 実行ロジック
 document.getElementById('btn-drop').onclick = () => {
     if(dropping) return;
     dropping = true;
@@ -152,42 +156,43 @@ document.getElementById('btn-drop').onclick = () => {
 document.getElementById('btn-reset').onclick = () => {
     dropping = false;
     velocity = 0;
-    target.position.y = 3;
+    target.position.y = 1.5;
     updateParams();
-    sinkStat.innerText = "0";
 };
 
 function animate() {
     requestAnimationFrame(animate);
-
     if (dropping) {
-        // 自由落下
-        velocity += 0.015; // 簡易的な重力加速度
+        velocity += 0.02; 
         ball.position.y -= velocity;
 
-        // 円柱との衝突判定
-        if (ball.position.y <= target.position.y + 1) {
+        if (ball.position.y <= target.position.y + 1.5) {
             dropping = false;
             const m = parseFloat(massInput.value);
             const h = parseFloat(heightInput.value);
             const energy = m * g * h;
-            
-            // 沈み込み計算
-            const sinkDist = energy / k;
-            target.position.y -= sinkDist * 0.2; // 視覚的に調整
-            sinkStat.innerText = (sinkDist * 10).toFixed(2);
+            const sinkDist = energy / k; // 物理モデルに基づいた沈み込み
 
-            // グラフ更新
-            chart.data.datasets[0].data.push({x: energy, y: sinkDist * 10});
-            chart.update();
+            target.position.y -= (sinkDist * 0.1); 
+            document.getElementById('stat-sink').innerText = (sinkDist * 10).toFixed(2);
+
+            // グラフへの記録
+            chartHeight.data.datasets[0].data.push({x: h, y: sinkDist * 10});
+            chartMass.data.datasets[0].data.push({x: m, y: sinkDist * 10});
+            chartHeight.update();
+            chartMass.update();
         }
     }
-
     renderer.render(scene, camera);
 }
-
 animate();
-</script>
 
+// ウィンドウリサイズ対応
+window.addEventListener('resize', () => {
+    camera.aspect = (window.innerWidth - 350) / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth - 350, window.innerHeight);
+});
+</script>
 </body>
 </html>
