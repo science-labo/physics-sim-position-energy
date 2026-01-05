@@ -2,114 +2,197 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>位置エネルギー実験：2変数対照シミュレーター</title>
+    <title>位置エネルギー実験シミュレーター</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; font-family: 'Meiryo', sans-serif; background: #121212; color: #eee; display: flex; }
-        #sidebar { width: 360px; padding: 20px; background: #1e1e1e; height: 100vh; overflow-y: auto; box-shadow: 2px 0 10px rgba(0,0,0,0.5); z-index: 10; }
-        #viewport { flex-grow: 1; position: relative; }
-        .control-card { background: #2d2d2d; padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #444; }
-        label { display: block; font-size: 0.85rem; margin-bottom: 10px; color: #bbb; }
-        input[type="range"] { width: 100%; margin-bottom: 10px; }
-        .btn-group { display: flex; gap: 10px; }
-        button { flex: 1; padding: 12px; cursor: pointer; border: none; border-radius: 6px; font-weight: bold; transition: 0.3s; }
-        #btn-drop { background: #ff4757; color: white; }
-        #btn-drop:hover { background: #ff6b81; }
-        #btn-clear { background: #57606f; color: white; }
-        .chart-box { background: white; border-radius: 8px; padding: 10px; margin-top: 15px; }
-        .chart-title { color: #333; font-size: 0.75rem; font-weight: bold; text-align: center; margin-bottom: 5px; }
-        .value-display { color: #fff; font-size: 1.1rem; font-weight: bold; float: right; }
+        body { margin: 0; overflow: hidden; font-family: 'Helvetica Neue', Arial, sans-serif; background: #1a1a1a; color: #fff; display: flex; }
+        #sidebar { width: 350px; padding: 20px; background: #252525; height: 100vh; overflow-y: auto; box-sizing: border-box; border-right: 2px solid #444; }
+        #canvas-container { flex-grow: 1; height: 100vh; position: relative; background: #000; }
+        .control-panel { background: #333; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        label { display: block; margin-bottom: 5px; font-size: 0.9rem; color: #ccc; }
+        .value-text { font-weight: bold; color: #00d4ff; float: right; }
+        input[type="range"] { width: 100%; margin-bottom: 15px; cursor: pointer; }
+        button { width: 100%; padding: 12px; margin-bottom: 10px; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; transition: 0.3s; }
+        #btn-drop { background: #e91e63; color: white; font-size: 1rem; }
+        #btn-drop:hover { background: #ff4081; }
+        #btn-reset { background: #555; color: white; }
+        .chart-wrapper { background: white; padding: 10px; border-radius: 8px; margin-bottom: 15px; }
+        h2 { font-size: 1.1rem; margin-top: 0; border-bottom: 1px solid #555; padding-bottom: 10px; }
     </style>
 </head>
 <body>
 
 <div id="sidebar">
-    <h2 style="font-size: 1.2rem; margin-top: 0;">実験パラメータ</h2>
-    
-    <div class="control-card">
-        <label>質量 $m$: <span class="value-display" id="txt-mass">1.0</span> kg</label>
+    <h2>実験設定</h2>
+    <div class="control-panel">
+        <label>質量 (m): <span id="txt-mass" class="value-text">1.0</span> kg</label>
         <input type="range" id="range-mass" min="0.5" max="5.0" step="0.5" value="1.0">
         
-        <label>高さ $h$: <span class="value-display" id="txt-height">5.0</span> m</label>
+        <label>高さ (h): <span id="txt-height" class="value-text">5.0</span> m</label>
         <input type="range" id="range-height" min="1.0" max="10.0" step="1.0" value="5.0">
         
-        <div class="btn-group">
-            <button id="btn-drop">落下開始</button>
-            <button id="btn-clear">データ消去</button>
-        </div>
+        <button id="btn-drop">鉄球を落とす</button>
+        <button id="btn-reset">リセット / データ消去</button>
     </div>
 
-    <div class="chart-box">
-        <div class="chart-title">【実験1】質量 $m$ と沈み込みの関係</div>
+    <div class="chart-wrapper">
         <canvas id="chartMass"></canvas>
     </div>
 
-    <div class="chart-box">
-        <div class="chart-title">【実験2】高さ $h$ と沈み込みの関係</div>
+    <div class="chart-wrapper">
         <canvas id="chartHeight"></canvas>
     </div>
 </div>
 
-<div id="viewport"></div>
+<div id="canvas-container"></div>
 
 <script>
-// --- 物理設定 ---
-const G_ACCEL = 0.015; // シミュレーション上の重力
-const RESISTANCE = 40; // 筒の中の円柱の抵抗係数
+// --- シミュレーション設定 ---
+let scene, camera, renderer, ball, target, tube;
+let isDropping = false;
+let velocity = 0;
+const gravity = 0.015; 
+const resistance = 35;
 
-// --- Three.js 構築 ---
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(50, (window.innerWidth - 360) / window.innerHeight, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth - 360, window.innerHeight);
-document.getElementById('viewport').appendChild(renderer.domElement);
+function initThree() {
+    const container = document.getElementById('canvas-container');
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x111111);
 
-// ライティング
-scene.add(new THREE.AmbientLight(0x666666));
-const sun = new THREE.DirectionalLight(0xffffff, 1);
-sun.position.set(5, 10, 5);
-scene.add(sun);
+    camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+    camera.position.set(12, 10, 12);
+    camera.lookAt(0, 4, 0);
 
-// 床とグリッド
-const grid = new THREE.GridHelper(20, 20, 0x444444, 0x222222);
-scene.add(grid);
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    container.appendChild(renderer.domElement);
 
-// 透明な筒
-const tube = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.7, 0.7, 8, 32, 1, true),
-    new THREE.MeshPhongMaterial({color: 0x00aaff, transparent: true, opacity: 0.2, side: THREE.DoubleSide})
-);
-tube.position.y = 4;
-scene.add(tube);
+    // ライト
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(10, 20, 10);
+    scene.add(directionalLight);
 
-// 沈む円柱
-const target = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.6, 0.6, 2, 32),
-    new THREE.MeshPhongMaterial({color: 0xffa500})
-);
-target.position.y = 1; // 地面スレスレ
-scene.add(target);
+    // 床
+    const grid = new THREE.GridHelper(20, 20, 0x444444, 0x222222);
+    scene.add(grid);
 
-// 鉄球
-const ball = new THREE.Mesh(
-    new THREE.SphereGeometry(0.5, 32, 32),
-    new THREE.MeshPhongMaterial({color: 0x888888, specular: 0xffffff, shininess: 50})
-);
-scene.add(ball);
+    // 筒
+    tube = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.8, 0.8, 10, 32, 1, true),
+        new THREE.MeshPhongMaterial({color: 0x00ccff, transparent: true, opacity: 0.2, side: THREE.DoubleSide})
+    );
+    tube.position.y = 5;
+    scene.add(tube);
 
-camera.position.set(10, 8, 10);
-camera.lookAt(0, 3, 0);
+    // 沈む円柱
+    target = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.7, 0.7, 2, 32),
+        new THREE.MeshPhongMaterial({color: 0xff9800})
+    );
+    target.position.y = 1;
+    scene.add(target);
 
-// --- Chart.js 設定 ---
-const createChartConfig = (xLabel, color) => ({
-    type: 'scatter',
-    data: { datasets: [{ label: '実験データ', data: [], backgroundColor: color, pointRadius: 5 }] },
-    options: {
-        scales: {
-            x: { type: 'linear', title: { display: true, text: xLabel } },
-            y: { title: { display: true, text: '沈み込み距離 (cm)' }, min: 0, max: 15 }
-        },
-        plugins: { legend: { display: false } }
+    // 鉄球
+    ball = new THREE.Mesh(
+        new THREE.SphereGeometry(0.6, 32, 32),
+        new THREE.MeshPhongMaterial({color: 0xaaaaaa, specular: 0xffffff})
+    );
+    scene.add(ball);
+
+    updateScene();
+}
+
+// --- グラフ設定 ---
+function createConfig(title, xLabel) {
+    return {
+        type: 'scatter',
+        data: { datasets: [{ label: '実験値', data: [], backgroundColor: '#2196F3' }] },
+        options: {
+            responsive: true,
+            plugins: { title: { display: true, text: title }, legend: { display: false } },
+            scales: {
+                x: { type: 'linear', title: { display: true, text: xLabel } },
+                y: { title: { display: true, text: '沈み込み (cm)' }, min: 0, max: 15 }
+            }
+        }
+    };
+}
+
+const chartMass = new Chart(document.getElementById('chartMass'), createConfig('質量と沈み込みの関係', '質量 (kg)'));
+const chartHeight = new Chart(document.getElementById('chartHeight'), createConfig('高さと沈み込みの関係', '高さ (m)'));
+
+// --- ロジック ---
+const rangeMass = document.getElementById('range-mass');
+const rangeHeight = document.getElementById('range-height');
+
+function updateScene() {
+    const m = parseFloat(rangeMass.value);
+    const h = parseFloat(rangeHeight.value);
+    document.getElementById('txt-mass').innerText = m.toFixed(1);
+    document.getElementById('txt-height').innerText = h.toFixed(1);
+    
+    ball.scale.set(0.6 + m*0.1, 0.6 + m*0.1, 0.6 + m*0.1);
+    if (!isDropping) {
+        ball.position.set(0, h + 3, 0);
+        target.position.y = 1;
+        velocity = 0;
     }
+}
+
+rangeMass.oninput = updateScene;
+rangeHeight.oninput = updateScene;
+
+document.getElementById('btn-drop').onclick = () => {
+    if (isDropping) return;
+    isDropping = true;
+};
+
+document.getElementById('btn-reset').onclick = () => {
+    isDropping = false;
+    chartMass.data.datasets[0].data = [];
+    chartHeight.data.datasets[0].data = [];
+    chartMass.update();
+    chartHeight.update();
+    updateScene();
+};
+
+function animate() {
+    requestAnimationFrame(animate);
+    if (isDropping) {
+        velocity += gravity;
+        ball.position.y -= velocity;
+
+        if (ball.position.y <= target.position.y + 1.2) {
+            isDropping = false;
+            const m = parseFloat(rangeMass.value);
+            const h = parseFloat(rangeHeight.value);
+            const sinkAmount = (m * 9.8 * h) / resistance;
+            
+            target.position.y -= (sinkAmount * 0.15); // 視覚演出
+            
+            chartMass.data.datasets[0].data.push({x: m, y: sinkAmount * 10});
+            chartHeight.data.datasets[0].data.push({x: h, y: sinkAmount * 10});
+            chartMass.update();
+            chartHeight.update();
+        }
+    }
+    renderer.render(scene, camera);
+}
+
+// 起動
+initThree();
+animate();
+
+// リサイズ対応
+window.addEventListener('resize', () => {
+    const container = document.getElementById('canvas-container');
+    camera.aspect = container.clientWidth / container.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(container.clientWidth, container.clientHeight);
 });
+</script>
+</body>
+</html>
